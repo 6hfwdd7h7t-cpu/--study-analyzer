@@ -36,7 +36,7 @@
 </head>
 <body>
 <main class="app">
-  <header><div class="title-wrap"><h1>学習・認知パフォーマンス分析</h1><p>正答 × 反応時間 × 自信度</p></div><div class="pill">Web Ver.2.9</div></header>
+  <header><div class="title-wrap"><h1>学習・認知パフォーマンス分析</h1><p>正答 × 反応時間 × 自信度</p></div><div class="pill">Web Ver.2.10</div></header>
 
   <section id="homeView" class="view active">
     <div class="card"><h2>今日の学習</h2><p class="muted small">登録問題からランダムに出題します。</p>
@@ -123,6 +123,10 @@
         <h2>問題データベース</h2>
         <p class="muted small">問題・画像・登録した選択肢別解説を1ファイルに保存できます。別端末やホーム画面版で読み込むと、まとめて復元します。回答履歴は含みません。</p>
         <button class="secondary" id="exportQuestionDbBtn" type="button" style="width:100%">問題DB（解説込み）をファイル保存</button>
+        <div id="questionDbExportBox" class="notice hidden" style="margin-top:12px">
+          <div id="questionDbExportText" class="small"></div>
+          <button class="primary" id="saveQuestionDbBtn" type="button" style="margin-top:10px;width:100%">ファイルに保存 / 共有</button>
+        </div>
         <div style="height:10px"></div>
         <label for="questionDbInput">問題DBを読み込む</label>
         <input type="file" id="questionDbInput" accept=".json,application/json">
@@ -175,7 +179,7 @@
     {id:uid(),category:"サンプル",question:"自信度が高いのに誤答した問題を別に見る主な目的はどれ？",choices:["誤って定着している知識候補を見つける","回答時間を消す","問題数を減らす","正答率を必ず上げる","分野を削除する"],answer:1}
   ];
   const storedQuestions=loadJson(STORAGE.questions,null);
-  let questions=Array.isArray(storedQuestions)?storedQuestions:sampleQuestions; let results=loadJson(STORAGE.results,[]); let pendingImageBlob=null; let previewUrl=null; let activeStudyImageUrl=null; let pendingBulkQuestions=[]; let pendingBulkSkipped=[]; let pendingDataset=null; let preparedExportFile=null;
+  let questions=Array.isArray(storedQuestions)?storedQuestions:sampleQuestions; let results=loadJson(STORAGE.results,[]); let pendingImageBlob=null; let previewUrl=null; let activeStudyImageUrl=null; let pendingBulkQuestions=[]; let pendingBulkSkipped=[]; let pendingDataset=null; let preparedExportFile=null; let preparedQuestionDbFile=null;
   if(!Array.isArray(storedQuestions))saveQuestionsRaw();
   if(!Array.isArray(results))results=[];
   let session={items:[],index:0,shownAt:0,selected:new Set(),rtMs:null,confidence:null,resultIds:[],mode:"通常",createdAt:null,practice:false,tempResults:[],noteDirty:false};
@@ -346,7 +350,38 @@
     pendingDataset=null;$("datasetJsonInput").value="";$("datasetImportBtn").disabled=false;$("datasetImportBtn").textContent="この問題セットを追加";renderDatasetPreview();
   }
 
-  async function exportQuestionDb(){try{const img=await collectExportImages(),memo=await collectExportNotes();const data={kind:"study-analyzer-question-db",version:3,exportedAt:new Date().toISOString(),questions,images:img.images,notes:memo.notes,exportWarnings:{imageIds:img.failed,notesSkipped:memo.failed}};const filename=`study-analyzer-question-db-${new Date().toISOString().slice(0,10)}.json`;showPreparedExport(makeJsonExportFile(JSON.stringify(data,null,2),filename),exportWarning(img.failed,memo.failed))}catch(e){console.error("question DB export failed",e);alert("問題DBの作成に失敗しました。"+(e&&e.message?"\n"+e.message:""))}}
+  async function exportQuestionDb(){
+    const btn=$("exportQuestionDbBtn");
+    try{
+      btn.disabled=true;btn.textContent="問題DBを作成中…";
+      const img=await collectExportImages(),memo=await collectExportNotes();
+      const data={kind:"study-analyzer-question-db",version:4,exportedAt:new Date().toISOString(),questions,images:img.images,notes:memo.notes,exportWarnings:{imageIds:img.failed,notesSkipped:memo.failed}};
+      const filename=`study-analyzer-question-db-${new Date().toISOString().slice(0,10)}.json`;
+      const text=JSON.stringify(data,null,2);
+      preparedQuestionDbFile=makeJsonExportFile(text,filename);
+      const sizeKb=Math.max(1,Math.round((preparedQuestionDbFile.size||0)/1024)),warning=exportWarning(img.failed,memo.failed);
+      $("questionDbExportText").textContent=`${filename}（約${sizeKb} KB）の準備ができました。${warning?warning+" ":""}下のボタンを押し、iPhoneでは共有画面の「ファイルに保存」を選んでください。`;
+      $("saveQuestionDbBtn").textContent=canShareFile(preparedQuestionDbFile)?"ファイルに保存 / 共有":"ダウンロード";
+      $("questionDbExportBox").classList.remove("hidden");
+      $("questionDbExportBox").scrollIntoView({behavior:"smooth",block:"nearest"});
+    }catch(e){
+      console.error("question DB export failed",e);preparedQuestionDbFile=null;$("questionDbExportBox").classList.add("hidden");
+      alert("問題DBの作成に失敗しました。"+(e&&e.message?"\n"+e.message:""));
+    }finally{btn.disabled=false;btn.textContent="問題DB（解説込み）をファイル保存"}
+  }
+  async function savePreparedQuestionDb(){
+    if(!preparedQuestionDbFile){alert("先に問題DBを作成してください。");return}
+    const name=exportFileName(preparedQuestionDbFile);
+    try{
+      if(canShareFile(preparedQuestionDbFile)){await navigator.share({files:[preparedQuestionDbFile],title:name})}
+      else{downloadBlob(name,preparedQuestionDbFile)}
+    }catch(e){
+      if(e&&e.name!=="AbortError"){
+        console.error("question DB save failed",e);
+        try{downloadBlob(name,preparedQuestionDbFile)}catch{alert("保存画面を開けませんでした。Safariで再読み込みしてもう一度試してください。完全バックアップJSONでも問題は復元できます。")}
+      }
+    }
+  }
   function importQuestionDb(file){const reader=new FileReader();reader.onload=async()=>{try{const data=JSON.parse(reader.result);if(!Array.isArray(data.questions))throw new Error("形式");const imageCount=data.images&&typeof data.images==="object"?Object.keys(data.images).length:0,noteCount=data.notes&&typeof data.notes==="object"?Object.keys(data.notes).length:0;if(!confirm(`${data.questions.length}問・画像${imageCount}点・解説${noteCount}問分を読み込み、現在の問題データベースを置き換えますか？\n\n回答履歴は残ります。`))return;const embeddedNotes={};questions=data.questions.map(q=>{const copy={...q};if(Array.isArray(copy.choiceNotes)){embeddedNotes[copy.id]=copy.choiceNotes;delete copy.choiceNotes}return copy});await clearImages();await clearChoiceNotes();if(data.images&&typeof data.images==="object")for(const [id,url] of Object.entries(data.images)){try{await saveImage(id,dataURLToBlob(url))}catch{}}await importChoiceNotesObject({...embeddedNotes,...(data.notes||{})});clearSavedSession();saveQuestionsRaw();refreshAll();alert(`${questions.length}問を問題データベースから復元しました。`)}catch(e){alert("読み込みに失敗しました。Study Analyzerの問題DBまたはバックアップJSONか確認してください。")}};reader.readAsText(file,"utf-8")}
   async function clearQuestionsOnly(){if(!confirm(`登録問題 ${questions.length}問・画像・登録済み解説を一斉削除しますか？\n\n回答履歴は残します。あとで同じ問題DBを読み込めば、問題IDが同じなので履歴と再び紐付きます。`))return;questions=[];await clearImages();await clearChoiceNotes();clearSavedSession();saveQuestionsRaw();refreshAll();alert("問題・画像・登録済み解説を削除しました。回答履歴は残っています。")}
   function renderClassification(){const latest=latestResultsMap(),questionIds=new Set(questions.map(q=>q.id)),rows=[...latest.values()].filter(r=>questionIds.has(r.questionId)),rtValues=rows.map(r=>Number(r.rtMs)||0).filter(v=>v>0),cut=rtValues.length?median(rtValues):0;const counts={mastered:0,hesitant:0,mislearned:0,weak:0};for(const r of rows){const conf=Number(r.confidence)||0,fast=!cut||(Number(r.rtMs)||0)<=cut;if(r.correct&&conf>=4&&fast)counts.mastered++;else if(r.correct)counts.hesitant++;else if(conf>=4)counts.mislearned++;else counts.weak++}$("classificationNote").textContent=rows.length?`各問題の最新回答で分類。RTの速い/遅いは最新回答の中央値 ${(cut/1000).toFixed(2)}秒を基準にしています。`:"回答すると分類されます。";$("stateClassification").innerHTML=rows.length?`<div class="list-item"><div class="list-title">定着　${counts.mastered}問</div><div class="list-meta"><span>○・自信4〜5・RT中央値以下</span></div></div><div class="list-item"><div class="list-title">迷って正解　${counts.hesitant}問</div><div class="list-meta"><span>○だが自信が低い、またはRTが遅い</span></div></div><div class="list-item"><div class="list-title">誤学習注意　${counts.mislearned}問</div><div class="list-meta"><span>×・自信4〜5</span></div></div><div class="list-item"><div class="list-title">未定着　${counts.weak}問</div><div class="list-meta"><span>×・自信1〜3</span></div></div>`:'<div class="empty">まだ分類できる回答がありません。</div>'}
@@ -368,7 +403,7 @@
   function refreshAll(){refreshCategories();renderHome();renderQuestionList();renderAnalysis()}
 
   $$('[data-qtab]').forEach(btn=>btn.addEventListener("click",()=>{$$('[data-qtab]').forEach(b=>b.classList.remove("active"));btn.classList.add("active");["qtabAdd","qtabList","qtabImport"].forEach(id=>$(id).classList.add("hidden"));$("qtab"+btn.dataset.qtab.charAt(0).toUpperCase()+btn.dataset.qtab.slice(1)).classList.remove("hidden")}));
-  renderChoiceInputs();updateTypeUi();$("qType").addEventListener("change",updateTypeUi);$("qImage").addEventListener("change",onImageChosen);$("removeImageBtn").addEventListener("click",clearPendingImage);$("bulkTextInput").addEventListener("change",onBulkTextChosen);$("bulkImportBtn").addEventListener("click",importBulkQuestions);$("datasetJsonInput").addEventListener("change",onDatasetChosen);$("datasetImportBtn").addEventListener("click",importDatasetQuestions);$("startBtn").addEventListener("click",startSession);$("practiceStartBtn").addEventListener("click",startPracticeSession);$("resumeBtn").addEventListener("click",resumeSession);$("discardSessionBtn").addEventListener("click",()=>{if(confirm("中断位置だけ破棄しますか？回答済みの履歴は残ります。")){clearSavedSession();renderResumeCard()}});$("reviewType").addEventListener("change",updateReviewAvailable);$("reviewStartBtn").addEventListener("click",startReviewSession);$("multiSubmitBtn").addEventListener("click",()=>{if(session.selected.size===2)finalizeSelection([...session.selected])});$("nextBtn").addEventListener("click",nextQuestion);$("savePracticeNotesBtn").addEventListener("click",saveCurrentPracticeNotes);$("clearPracticeNotesBtn").addEventListener("click",clearCurrentPracticeNotes);$("quitBtn").addEventListener("click",()=>{if(session.practice){if(session.noteDirty&&!confirm("未登録の解説は保存されません。練習を中断してホームへ戻りますか？"))return;switchView("homeView");return}saveSessionState(session.confidence!==null?session.index+1:session.index);switchView("homeView")});$("addQuestionBtn").addEventListener("click",addQuestion);$("exportQuestionDbBtn").addEventListener("click",exportQuestionDb);$("questionDbInput").addEventListener("change",e=>{const f=e.target.files?.[0];if(f)importQuestionDb(f);e.target.value=""});$("clearQuestionsBtn").addEventListener("click",clearQuestionsOnly);$("exportJsonBtn").addEventListener("click",exportJson);$("exportCsvBtn").addEventListener("click",exportCsv);$("sharePreparedBtn").addEventListener("click",sharePreparedExport);$("resetBtn").addEventListener("click",resetAll);$("importJsonInput").addEventListener("change",e=>{const f=e.target.files?.[0];if(f)importJson(f);e.target.value=""});
+  renderChoiceInputs();updateTypeUi();$("qType").addEventListener("change",updateTypeUi);$("qImage").addEventListener("change",onImageChosen);$("removeImageBtn").addEventListener("click",clearPendingImage);$("bulkTextInput").addEventListener("change",onBulkTextChosen);$("bulkImportBtn").addEventListener("click",importBulkQuestions);$("datasetJsonInput").addEventListener("change",onDatasetChosen);$("datasetImportBtn").addEventListener("click",importDatasetQuestions);$("startBtn").addEventListener("click",startSession);$("practiceStartBtn").addEventListener("click",startPracticeSession);$("resumeBtn").addEventListener("click",resumeSession);$("discardSessionBtn").addEventListener("click",()=>{if(confirm("中断位置だけ破棄しますか？回答済みの履歴は残ります。")){clearSavedSession();renderResumeCard()}});$("reviewType").addEventListener("change",updateReviewAvailable);$("reviewStartBtn").addEventListener("click",startReviewSession);$("multiSubmitBtn").addEventListener("click",()=>{if(session.selected.size===2)finalizeSelection([...session.selected])});$("nextBtn").addEventListener("click",nextQuestion);$("savePracticeNotesBtn").addEventListener("click",saveCurrentPracticeNotes);$("clearPracticeNotesBtn").addEventListener("click",clearCurrentPracticeNotes);$("quitBtn").addEventListener("click",()=>{if(session.practice){if(session.noteDirty&&!confirm("未登録の解説は保存されません。練習を中断してホームへ戻りますか？"))return;switchView("homeView");return}saveSessionState(session.confidence!==null?session.index+1:session.index);switchView("homeView")});$("addQuestionBtn").addEventListener("click",addQuestion);$("exportQuestionDbBtn").addEventListener("click",exportQuestionDb);$("saveQuestionDbBtn").addEventListener("click",savePreparedQuestionDb);$("questionDbInput").addEventListener("change",e=>{const f=e.target.files?.[0];if(f)importQuestionDb(f);e.target.value=""});$("clearQuestionsBtn").addEventListener("click",clearQuestionsOnly);$("exportJsonBtn").addEventListener("click",exportJson);$("exportCsvBtn").addEventListener("click",exportCsv);$("sharePreparedBtn").addEventListener("click",sharePreparedExport);$("resetBtn").addEventListener("click",resetAll);$("importJsonInput").addEventListener("change",e=>{const f=e.target.files?.[0];if(f)importJson(f);e.target.value=""});
   $("confidenceButtons").innerHTML=[1,2,3,4,5].map(n=>`<button data-conf="${n}">${n}</button>`).join("");$$("#confidenceButtons button").forEach(btn=>btn.addEventListener("click",()=>chooseConfidence(Number(btn.dataset.conf))));
   document.addEventListener("keydown",e=>{if(!$("studyView").classList.contains("active"))return;if(/^[1-5]$/.test(e.key)&&session.rtMs===null){handleChoice(Number(e.key))}else if(!session.practice&&/^[1-5]$/.test(e.key)&&session.rtMs!==null&&session.confidence===null){chooseConfidence(Number(e.key))}else if((e.key==="Enter"||e.key===" ")&&!$("feedbackArea").classList.contains("hidden")&&!session.noteDirty){e.preventDefault();nextQuestion()}});
   let deferredInstallPrompt=null;
